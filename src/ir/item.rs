@@ -1775,7 +1775,11 @@ impl ItemCanonicalName for Item {
                 ctx.options().disable_name_namespacing;
 
             *self.canonical_name_cache.borrow_mut() = if in_namespace {
-                Some(self.name(ctx).within_namespaces().get())
+                let mut nm = self.name(ctx).within_namespaces().get();
+                if nm.starts_with("_") {
+                    nm.remove(0);
+                }
+                Some(nm)
             } else {
                 Some(self.name(ctx).get())
             };

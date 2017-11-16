@@ -13,7 +13,7 @@ pub mod attributes {
         }
     }
 
-    pub fn repr_list(which_ones: &[&str]) -> quote::Tokens {
+    pub fn _repr_list(which_ones: &[&str]) -> quote::Tokens {
         let which_ones = which_ones.iter().cloned().map(quote::Ident::new);
         quote! {
             #[repr( #( #which_ones ),* )]
@@ -81,7 +81,7 @@ pub fn blob(layout: Layout) -> quote::Tokens {
         }
     } else {
         quote! {
-            [ #ty_name ; #data_len ]
+            jnr.ffi.Pointer
         }
     }
 }
@@ -98,7 +98,7 @@ pub mod ast_ty {
             Some(ref prefix) => {
                 let prefix = ctx.rust_ident_raw(prefix.as_str());
                 quote! {
-                    #prefix::#ident
+                    #prefix#ident
                 }
             }
             None => quote! {

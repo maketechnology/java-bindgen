@@ -49,7 +49,7 @@ fn preprocess_single_lines(comment: &str, indent: usize) -> String {
     let mut is_first = true;
     let lines: Vec<_> = comment
         .lines()
-        .map(|l| l.trim_left_matches('/').trim())
+        .map(|l| l.trim().trim_left_matches('/').trim())
         .map(|l| {
             let indent = if is_first { "" } else { &*indent };
             is_first = false;
@@ -101,12 +101,17 @@ mod test {
     fn picks_up_single_and_multi_line_doc_comments() {
         assert_eq!(kind("/// hello"), Some(Kind::SingleLines));
         assert_eq!(kind("/** world */"), Some(Kind::MultiLine));
+        assert_eq!(kind("///\n// Base structure.\n///"), Some(Kind::SingleLines));
     }
 
     #[test]
     fn processes_single_lines_correctly() {
         assert_eq!(preprocess("/// hello", 0), "/// hello");
         assert_eq!(preprocess("// hello", 0), "/// hello");
+        assert_eq!(preprocess("///\n// Base structure.\n///", 0), 
+        "///\n/// Base structure.\n///");
+        assert_eq!(preprocess("///\n// Base structure.\n// second line\n///", 0), 
+        "///\n/// Base structure.\n/// second line\n///");
     }
 
     #[test]

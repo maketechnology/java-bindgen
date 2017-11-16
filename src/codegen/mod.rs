@@ -57,7 +57,7 @@ fn top_level_path(ctx: &BindgenContext, item: &Item) -> Vec<quote::Tokens> {
     path
 }
 
-fn root_import(ctx: &BindgenContext, module: &Item) -> quote::Tokens {
+fn _root_import(ctx: &BindgenContext, module: &Item) -> quote::Tokens {
     assert!(ctx.options().enable_cxx_namespaces, "Somebody messed it up");
     assert!(module.is_module());
 
@@ -408,7 +408,7 @@ impl CodeGenerator for Module {
 
         let mut found_any = false;
         let inner_items = result.inner(|result| {
-            result.push(root_import(ctx, item));
+            //result.push(root_import(ctx, item));
             codegen_self(result, &mut found_any);
         });
 
@@ -421,8 +421,7 @@ impl CodeGenerator for Module {
 
         result.push(if name == "root" {
             quote! {
-                #[allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-                pub mod root {
+                public class CEF {
                     #( #inner_items )*
                 }
             }
@@ -698,7 +697,7 @@ impl CodeGenerator for Type {
                 }
 
                 tokens.append(quote! {
-                    pub type #rust_name
+                    public static class #rust_name
                 });
 
                 if let Some(params) = outer_params {
@@ -726,7 +725,11 @@ impl CodeGenerator for Type {
                 }
 
                 tokens.append(quote! {
-                    = #inner_rust_type ;
+                    extends #inner_rust_type {
+                        public #rust_name(jnr.ffi.Runtime runtime) {
+                            super(runtime);
+                        }
+                    }
                 });
 
                 result.push(tokens);
@@ -977,10 +980,16 @@ impl<'a> FieldCodegen<'a> for FieldData {
         // `BitfieldUnit` and `Bitfield`.
         assert!(self.bitfield_width().is_none());
 
+        let field_name =
+            self.name()
+                .map(|name| ctx.rust_mangle(name).into_owned())
+                .expect("Each field should have a name in codegen!");
         let field_item = self.ty().into_resolver().through_type_refs().resolve(ctx);
         let field_ty = field_item.expect_type();
         let mut ty = self.ty().to_rust_ty_or_opaque(ctx, &());
 
+        // let class_name = ctx.rust_ident_raw(format!("{}{}", field_name.as_str().get(0..1).unwrap().to_uppercase(), field_name.as_str().get(1..).unwrap()));
+        let class_name = ctx.rust_ident_raw(field_name.as_str());
         // NB: If supported, we use proper `union` types.
         let ty = if parent.is_union() && !parent.can_be_rust_union(ctx) {
             if ctx.options().enable_cxx_namespaces {
@@ -1008,7 +1017,19 @@ impl<'a> FieldCodegen<'a> for FieldData {
             }
         } else {
             ty.append_implicit_template_params(ctx, field_item);
-            ty
+            match *field_ty.kind() {
+                TypeKind::Pointer(..) if ty.as_str().contains("invoke") => {
+                    methods.extend(Some(quote! {
+                        public static interface #class_name {
+                            #ty
+                        }
+                    }));
+                    quote! {
+                        Function<#class_name>
+                    }
+                },
+                _ => ty
+            }
         };
 
         let mut field = quote! {};
@@ -1020,10 +1041,6 @@ impl<'a> FieldCodegen<'a> for FieldData {
             }
         }
 
-        let field_name =
-            self.name()
-                .map(|name| ctx.rust_mangle(name).into_owned())
-                .expect("Each field should have a name in codegen!");
         let field_ident = ctx.rust_ident_raw(field_name.as_str());
 
         if !parent.is_union() {
@@ -1041,13 +1058,36 @@ impl<'a> FieldCodegen<'a> for FieldData {
         let accessor_kind =
             self.annotations().accessor_kind().unwrap_or(accessor_kind);
 
+        let field_value = match *field_ty.kind() {
+            TypeKind::Pointer(..) if ty.as_str().contains("Function") => quote! {
+                function(#class_name.class)
+            },
+            TypeKind::Alias(inner) => {
+                let inner_item = ctx.resolve_item(inner);
+                match *inner_item.kind() {
+                    ItemKind::Type(ref alias_type) => {
+                        match *alias_type.kind() {
+                            TypeKind::ResolvedTypeRef(ref _t) => quote! {
+                                inner(new #ty(getRuntime()))
+                            },
+                            _ => quote! {
+                                new #ty()
+                            }
+                        }
+                    }
+                    _ => quote! { new #ty() }
+                }
+            },
+            _ => quote! { new #ty() }
+        };
+
         if is_private {
             field.append(quote! {
                 #field_ident : #ty ,
             });
         } else {
             field.append(quote! {
-                pub #field_ident : #ty ,
+                public #ty #field_ident = #field_value;
             });
         }
 
@@ -1619,9 +1659,9 @@ impl CodeGenerator for CompInfo {
             attributes.push(attributes::doc(comment));
         }
         if packed {
-            attributes.push(attributes::repr_list(&["C", "packed"]));
+            // attributes.push(attributes::repr_list(&["C", "packed"]));
         } else {
-            attributes.push(attributes::repr("C"));
+            // attributes.push(attributes::repr("C"));
         }
 
         let mut derives = vec![];
@@ -1698,16 +1738,9 @@ impl CodeGenerator for CompInfo {
         } else {
             quote! {
                 #( #attributes )*
-                pub struct #canonical_ident
+                public static class #canonical_ident extends Struct
             }
         };
-
-        tokens.append(quote! {
-            #generics {
-                #( #fields )*
-            }
-        });
-        result.push(tokens);
 
         // Generate the inner types and all that stuff.
         //
@@ -1925,13 +1958,19 @@ impl CodeGenerator for CompInfo {
             }
         }
 
-        if !methods.is_empty() {
-            result.push(quote! {
-                impl #generics #ty_for_impl {
-                    #( #methods )*
+        tokens.append(quote! {
+            #generics {
+                static {
+                  mapTypeForClosure(#canonical_ident.class);
                 }
-            });
-        }
+                #( #fields )*
+                #( #methods )*
+                public #canonical_ident(jnr.ffi.Runtime runtime) {
+                   super(runtime);
+                }
+            }
+        });
+        result.push(tokens);
     }
 }
 
@@ -2154,8 +2193,8 @@ impl<'a> EnumBuilder<'a> {
 
             EnumVariation::Rust => {
                 let mut tokens = quote! {
-                    #( #attrs )*
-                    pub enum #ident
+                    
+                    public enum #ident implements IntegerEnum
                 };
                 tokens.append("{");
                 EnumBuilder::Rust(tokens)
@@ -2203,7 +2242,7 @@ impl<'a> EnumBuilder<'a> {
                 let name = ctx.rust_ident(variant_name);
                 EnumBuilder::Rust(quote! {
                     #tokens
-                    #name = #expr,
+                    #name(#expr),
                 })
             }
 
@@ -2266,6 +2305,19 @@ impl<'a> EnumBuilder<'a> {
     ) -> quote::Tokens {
         match self {
             EnumBuilder::Rust(mut t) => {
+                t.append(quote! {
+                    ;
+                    private int nativeInt;
+
+                    private #rust_ty(int nativeInt) {
+                        this.nativeInt = nativeInt;
+                    }
+
+                    @Override
+                    public int intValue() {
+                        return nativeInt;
+                    }
+                });
                 t.append("}");
                 t
             }
@@ -2849,12 +2901,12 @@ impl TryToRustTy for Type {
                     IntKind::Bool => Ok(quote! { bool }),
                     IntKind::Char {
                         ..
-                    } => Ok(raw_type(ctx, "c_char")),
+                    } => Ok(raw_type(ctx, "char")),
                     IntKind::SChar => Ok(raw_type(ctx, "c_schar")),
                     IntKind::UChar => Ok(raw_type(ctx, "c_uchar")),
                     IntKind::Short => Ok(raw_type(ctx, "c_short")),
                     IntKind::UShort => Ok(raw_type(ctx, "c_ushort")),
-                    IntKind::Int => Ok(raw_type(ctx, "c_int")),
+                    IntKind::Int => Ok(raw_type(ctx, "Signed32")),
                     IntKind::UInt => Ok(raw_type(ctx, "c_uint")),
                     IntKind::Long => Ok(raw_type(ctx, "c_long")),
                     IntKind::ULong => Ok(raw_type(ctx, "c_ulong")),
@@ -2907,9 +2959,9 @@ impl TryToRustTy for Type {
                 // variant here.
                 let ty = fs.try_to_rust_ty(ctx, &())?;
 
-                let prefix = ctx.trait_prefix();
+                let _prefix = ctx.trait_prefix();
                 Ok(quote! {
-                    ::#prefix::option::Option<#ty>
+                    #ty
                 })
             }
             TypeKind::Array(item, len) => {
@@ -2950,9 +3002,9 @@ impl TryToRustTy for Type {
                 }
             }
             TypeKind::Comp(ref info) => {
-                let template_params = item.used_template_params(ctx);
+                let _template_params = item.used_template_params(ctx);
                 if info.has_non_type_template_params() ||
-                    (item.is_opaque(ctx, &()) && template_params.is_some())
+                    (item.is_opaque(ctx, &()) /*&& template_params.is_some()*/)
                 {
                     return self.try_to_opaque(ctx, item);
                 }
@@ -2969,7 +3021,7 @@ impl TryToRustTy for Type {
             }
             TypeKind::Pointer(inner) |
             TypeKind::Reference(inner) => {
-                let is_const = self.is_const() || ctx.resolve_type(inner).is_const();
+                let _is_const = self.is_const() || ctx.resolve_type(inner).is_const();
 
                 let inner = inner.into_resolver().through_type_refs().resolve(ctx);
                 let inner_ty = inner.expect_type();
@@ -2985,7 +3037,8 @@ impl TryToRustTy for Type {
                 if inner_ty.canonical_type(ctx).is_function() {
                     Ok(ty)
                 } else {
-                    Ok(ty.to_ptr(is_const))
+                    //Ok(ty.to_ptr(is_const))
+                    Ok(ty)
                 }
             }
             TypeKind::TypeParam => {
@@ -3111,7 +3164,7 @@ impl TryToRustTy for FunctionSig {
             }
             _ => {
                 Ok(quote! {
-                    unsafe extern #abi fn ( #( #arguments ),* ) #ret
+                    @Delegate #ret invoke( #( #arguments ),* );
                 })
             }
         }
@@ -3192,7 +3245,7 @@ impl CodeGenerator for Function {
             write!(&mut canonical_name, "{}", times_seen).unwrap();
         }
 
-        let abi = match signature.abi() {
+        let _abi = match signature.abi() {
             Abi::ThisCall if !ctx.options().rust_features().thiscall_abi() => {
                 warn!("Skipping function with thiscall ABI that isn't supported by the configured Rust target");
                 return;
@@ -3215,8 +3268,8 @@ impl CodeGenerator for Function {
         };
 
         let ident = ctx.rust_ident(canonical_name);
-        let mut tokens = quote! { extern #abi };
-        tokens.append("{\n");
+        let mut tokens = quote! { };
+        tokens.append("\n");
         if !attributes.is_empty() {
             tokens.append_separated(attributes, "\n");
             tokens.append("\n");
@@ -3224,9 +3277,9 @@ impl CodeGenerator for Function {
         let mut args = args;
         args.push(variadic);
         tokens.append(quote! {
-            pub fn #ident ( #( #args ),* ) #ret;
+            #ret #ident ( #( #args ),* );
         });
-        tokens.append("\n}");
+        tokens.append("\n");
         result.push(tokens);
     }
 }
@@ -3387,6 +3440,7 @@ mod utils {
     use ir::function::FunctionSig;
     use ir::item::{Item, ItemCanonicalPath};
     use ir::ty::TypeKind;
+    use ir::int::IntKind;
     use quote;
     use std::mem;
 
@@ -3612,7 +3666,12 @@ mod utils {
         let path = item.namespace_aware_canonical_path(ctx);
 
         let mut tokens = quote! {};
-        tokens.append_separated(path.into_iter().map(quote::Ident::new), "::");
+        tokens.append_separated(path.into_iter().map(|nm| {
+            if nm.starts_with("_") {
+                return String::from(nm.get(1..).unwrap());
+            }
+            nm
+        }).map(quote::Ident::new), "::");
 
         Ok(tokens)
     }
@@ -3640,8 +3699,9 @@ mod utils {
             "int64_t" => primitive_ty(ctx, "i64"),
             "uint64_t" => primitive_ty(ctx, "u64"),
 
-            "uintptr_t" | "size_t" => primitive_ty(ctx, "usize"),
-
+            "uintptr_t" | "size_t" => primitive_ty(ctx, "UnsignedLong"),
+            "wchar_t" | "char16" => primitive_ty(ctx, "Pointer"),
+            "int64" => primitive_ty(ctx, "long"),
             "intptr_t" | "ptrdiff_t" | "ssize_t" => primitive_ty(ctx, "isize"),
             _ => return None,
         })
@@ -3653,55 +3713,83 @@ mod utils {
     ) -> quote::Tokens {
         let return_item = ctx.resolve_item(sig.return_type());
         if let TypeKind::Void = *return_item.kind().expect_type().kind() {
-            quote! { }
+            quote! { void }
         } else {
-            let ret_ty = return_item.to_rust_ty_or_opaque(ctx, &());
-            quote! {
-                -> #ret_ty
-            }
+            // let ret_ty = return_item.to_rust_ty_or_opaque(ctx, &());
+            // quote! {
+            //     #ret_ty
+            // }
+            fnsig_ty(ctx, return_item)
         }
+    }
+
+    fn fnsig_ty(
+        ctx: &BindgenContext,
+        arg_item: &Item,
+    ) -> quote::Tokens {
+         use super::ToPtr;
+        let arg_ty = arg_item.kind().expect_type();
+
+        // From the C90 standard[1]:
+        //
+        //     A declaration of a parameter as "array of type" shall be
+        //     adjusted to "qualified pointer to type", where the type
+        //     qualifiers (if any) are those specified within the [ and ] of
+        //     the array type derivation.
+        //
+        // [1]: http://c0x.coding-guidelines.com/6.7.5.3.html
+        let arg_ty = match *arg_ty.canonical_type(ctx).kind() {
+            TypeKind::Array(t, _) => {
+                t.to_rust_ty_or_opaque(ctx, &())
+                    .to_ptr(ctx.resolve_type(t).is_const())
+            },
+            TypeKind::Pointer(inner) => {
+                let inner = ctx.resolve_item(inner);
+                let inner_ty = inner.expect_type();
+                if let TypeKind::ObjCInterface(_) = *inner_ty.canonical_type(ctx).kind() {
+                    quote! {
+                        id
+                    }
+                } else {
+                    match *inner_ty.kind() {
+                        TypeKind::Int(ik) => {
+                            match ik {
+                                IntKind::Int => quote! { IntByReference },
+                                _ => quote! { XXByReference }
+                            }
+                        },
+                        _ => {
+                            let ty = arg_item.to_rust_ty_or_opaque(ctx, &());
+                            if ty.as_str() == "Pointer" {
+                                quote! { jnr.ffi.#ty }
+                            } else {
+                                ty
+                            }
+                        }
+                    }
+                }
+            },
+            TypeKind::Int(ik) => {
+                match ik {
+                    IntKind::Int => quote! { int },
+                    _ => quote! { int }
+                }
+            }
+            _ => {
+                arg_item.to_rust_ty_or_opaque(ctx, &())
+            }
+        };
+        arg_ty
     }
 
     pub fn fnsig_arguments(
         ctx: &BindgenContext,
         sig: &FunctionSig,
     ) -> Vec<quote::Tokens> {
-        use super::ToPtr;
-
         let mut unnamed_arguments = 0;
         sig.argument_types().iter().map(|&(ref name, ty)| {
             let arg_item = ctx.resolve_item(ty);
-            let arg_ty = arg_item.kind().expect_type();
-
-            // From the C90 standard[1]:
-            //
-            //     A declaration of a parameter as "array of type" shall be
-            //     adjusted to "qualified pointer to type", where the type
-            //     qualifiers (if any) are those specified within the [ and ] of
-            //     the array type derivation.
-            //
-            // [1]: http://c0x.coding-guidelines.com/6.7.5.3.html
-            let arg_ty = match *arg_ty.canonical_type(ctx).kind() {
-                TypeKind::Array(t, _) => {
-                    t.to_rust_ty_or_opaque(ctx, &())
-                        .to_ptr(ctx.resolve_type(t).is_const())
-                },
-                TypeKind::Pointer(inner) => {
-                    let inner = ctx.resolve_item(inner);
-                    let inner_ty = inner.expect_type();
-                    if let TypeKind::ObjCInterface(_) = *inner_ty.canonical_type(ctx).kind() {
-                        quote! {
-                            id
-                        }
-                    } else {
-                        arg_item.to_rust_ty_or_opaque(ctx, &())
-                    }
-                },
-                _ => {
-                    arg_item.to_rust_ty_or_opaque(ctx, &())
-                }
-            };
-
+            let arg_ty = fnsig_ty(ctx, arg_item);
             let arg_name = match *name {
                 Some(ref name) => ctx.rust_mangle(name).into_owned(),
                 None => {
@@ -3714,7 +3802,7 @@ mod utils {
             let arg_name = ctx.rust_ident(arg_name);
 
             quote! {
-                #arg_name : #arg_ty
+                #arg_ty #arg_name
             }
         }).collect()
     }

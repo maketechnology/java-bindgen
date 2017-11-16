@@ -1,4 +1,4 @@
-extern crate bindgen;
+extern crate java_bindgen as bindgen;
 #[cfg(feature = "logging")]
 extern crate env_logger;
 #[macro_use]

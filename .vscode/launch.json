@@ -1,0 +1,36 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug",
+            "program": "${workspaceRoot}/target/debug/bindgen",
+            "env": {
+                // "RUST_LOG": "java_bindgen"
+            },
+            "args": [
+                "--no-layout-tests",
+                "--rustified-enum", ".*",
+                "--ctypes-prefix", "",
+                "--no-rustfmt-bindings",
+                "-o", "CEF.java",
+                "--no-recursive-whitelist",
+                "--enable-cxx-namespaces",
+                "--disable-name-namespacing",
+                "--whitelist-type", "_cef_browser_process_handler_t",
+                "--opaque-type", "cef_list_value_t",
+                "--opaque-type", "_cef_list_value_t",
+                "../cefrust/cef_java.h",
+                "--",
+                "-I../cefrust/cef_linux",
+                "-fparse-all-comments"
+            ],
+            "cwd": "${workspaceRoot}"
+        }
+    ]
+}
