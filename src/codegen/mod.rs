@@ -2194,7 +2194,7 @@ impl<'a> EnumBuilder<'a> {
             EnumVariation::Rust => {
                 let mut tokens = quote! {
                     
-                    public enum #ident implements IntegerEnum
+                    public enum #ident
                 };
                 tokens.append("{");
                 EnumBuilder::Rust(tokens)
@@ -2234,7 +2234,7 @@ impl<'a> EnumBuilder<'a> {
         let variant_name = ctx.rust_mangle(variant.name());
         let expr = match variant.val() {
             EnumVariantValue::Signed(v) => helpers::ast_ty::int_expr(v),
-            EnumVariantValue::Unsigned(v) => helpers::ast_ty::uint_expr(v),
+            EnumVariantValue::Unsigned(v) => helpers::ast_ty::hex_expr(v),
         };
 
         match self {
@@ -2307,14 +2307,13 @@ impl<'a> EnumBuilder<'a> {
             EnumBuilder::Rust(mut t) => {
                 t.append(quote! {
                     ;
-                    private int nativeInt;
+                    private long nativeInt;
 
-                    private #rust_ty(int nativeInt) {
+                    private #rust_ty(long nativeInt) {
                         this.nativeInt = nativeInt;
                     }
 
-                    @Override
-                    public int intValue() {
+                    public long longValue() {
                         return nativeInt;
                     }
                 });
@@ -2566,7 +2565,7 @@ impl CodeGenerator for Enum {
 
             match seen_values.entry(variant.val()) {
                 Entry::Occupied(ref entry) => {
-                    if variation.is_rust() {
+                    if variation.is_rust() && false {
                         let variant_name = ctx.rust_mangle(variant.name());
                         let mangled_name =
                             if is_toplevel || enum_ty.name().is_some() {
@@ -2890,7 +2889,7 @@ impl TryToRustTy for Type {
         use self::helpers::ast_ty::*;
 
         match *self.kind() {
-            TypeKind::Void => Ok(raw_type(ctx, "c_void")),
+            TypeKind::Void => Ok(raw_type(ctx, "Pointer")),
             // TODO: we should do something smart with nullptr, or maybe *const
             // c_void is enough?
             TypeKind::NullPtr => {
@@ -3700,7 +3699,7 @@ mod utils {
             "uint64_t" => primitive_ty(ctx, "u64"),
 
             "uintptr_t" | "size_t" => primitive_ty(ctx, "UnsignedLong"),
-            "wchar_t" | "char16" => primitive_ty(ctx, "Pointer"),
+            "wchar_t" | "char16" | "cef_string_list_t" => primitive_ty(ctx, "Pointer"),
             "int64" => primitive_ty(ctx, "long"),
             "intptr_t" | "ptrdiff_t" | "ssize_t" => primitive_ty(ctx, "isize"),
             _ => return None,

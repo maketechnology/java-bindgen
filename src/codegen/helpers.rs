@@ -119,9 +119,9 @@ pub mod ast_ty {
         // FIXME: `c_longdouble` doesn't seem to be defined in some
         // systems, so we use `c_double` directly.
         match (fk, ctx.options().convert_floats) {
-            (FloatKind::Float, true) => quote! { f32 },
+            (FloatKind::Float, true) => quote! { Signed32 },
             (FloatKind::Double, true) |
-            (FloatKind::LongDouble, true) => quote! { f64 },
+            (FloatKind::LongDouble, true) => quote! { double },
             (FloatKind::Float, false) => raw_type(ctx, "c_float"),
             (FloatKind::Double, false) |
             (FloatKind::LongDouble, false) => raw_type(ctx, "c_double"),
